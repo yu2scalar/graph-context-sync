@@ -5,8 +5,8 @@ description: Graph-based project context management (protocol skill of the `grap
 
 # graph-context-sync
 
-> Status: **v3.1.0 (2026-09-24 — plugin name `graph`, this skill `protocol` → `/graph:protocol` (D22, D23); v3.0.0 = plugin packaging D20/D21; protocol rules unchanged from v2 D5–D19)**
-> Long-form material (full data model, public decision register D1–D21) lives in `${CLAUDE_SKILL_DIR}/references/`.
+> Status: **v3.1.1 (2026-09-24 — D24 content-based staleness, D25 handover tables generated from the graph, fixture script, `$schema` pinned to tag; v3.1.0 = plugin `graph` / skill `protocol` (D22, D23); v3.0.0 = plugin packaging (D20, D21); rules R1–R8 from v2 D5–D19)**
+> Long-form material (full data model, public decision register D1–D25) lives in `${CLAUDE_SKILL_DIR}/references/`.
 
 ## Purpose
 
@@ -212,9 +212,21 @@ Purpose: load the full 1-hop / 2-hop neighbourhood and produce the Impact Assess
 3. Read every `docs` and `code_targets` path of every node in hops 0–2 in full (ranges for large files).
    For `decision`/`issue` nodes, read the `source_ref` entry in the registry file. Note missing paths.
 4. Set `current_node` = `<node_id>`.
-5. Staleness (F10): for each node in the subgraph, compare the newest git commit touching any
-   `code_targets` with the newest touching any `docs` (registry file for decision/issue). Fall back to mtime
-   without git. Flag code-newer-than-docs, missing paths, and `source_ref` not found in the registry file.
+5. Staleness (F10 + D24). Two layers:
+   - **Timestamp layer**: for each node in the subgraph, compare the newest git commit touching any
+     `code_targets` with the newest touching any `docs` (registry file for decision/issue). Fall back to mtime
+     without git. Flag code-newer-than-docs and missing paths.
+   - **Content layer (D24)**, independent of timestamps:
+     (a) *Registry ↔ graph*: for every `config.registries[]` entry, scan its file for ids matching `id_pattern`.
+         Ids present in the file and referenced from a document in `docs_scope` but with no node → "unindexed";
+         nodes whose `source_ref` is absent from the file → "orphan source_ref"; a node whose `folded[]` id is
+         absent from the file → "folded id lost".
+     (b) *Docs-only nodes*: a node with empty `code_targets` is compared against the newest change in the
+         `code_targets` of its `part_of` parent and of every node it `affects`; if that code is newer than the
+         node's `docs`, flag "docs-only node behind its code".
+     (c) *Shipped registers*: when a registry file lives inside `code_targets` of some node (e.g. a
+         `references/` register shipped with code), treat it as both code and registry — (a) applies and a
+         mismatch is reported against that node.
 6. Output the checklist in exactly this shape:
 
 ```markdown
@@ -283,9 +295,14 @@ Purpose: persist the exact state of work so a fresh session resumes with zero re
    `wip_status` IN_PROGRESS or BLOCKED. On approval: survivor.`folded` += folded `source_ref`s;
    survivor.`affects` ∪= folded.`affects`; survivor.`docs` ∪= folded.`docs`; delete the folded node and edges
    to it. Text stays in the registry, so nothing is lost overall.
-4. **Staleness (F10)** as in hydrate step 5, over the touched nodes.
+4. **Staleness (F10 + D24)** as in hydrate step 5 (both layers), over the touched nodes.
 5. **Write the handover** to `config.handover_path` (create the directory if needed; overwrite; the graph is
    the durable history, the handover is the live pointer) using the template below.
+   **Generated, not hand-written (D25)**: the Components table and the Subgraph table of §2, the node counts and
+   the growth / fold result lines of §6, and the timestamp columns of §7 are derived mechanically from
+   `dependency_graph.json` (same hop algorithm as hydrate step 2, all edge kinds both directions). The writer
+   may fill only the free-text columns ("why it matters", "note", "action"). Never retype ids, hop numbers, counts
+   or timestamps by hand; if a row is added manually it must be marked `(manual)`.
 6. **Fidelity (R3)**: preserve verbatim every explicit technical decision and its reason, every identifier
    chosen or renamed (variable, function, class, file, config key, schema field, enum value, CLI flag), and
    every edge discussed but not resolved. Name the option chosen and the options rejected. Never write
@@ -297,7 +314,7 @@ Growth and fold are proposals in the interaction language; they are never applie
 
 ```markdown
 # WIP HANDOVER — <project name>
-Generated: <YYYY-MM-DD HH:MM> · Graph: `dependency_graph.json` · Schema: plugin graph-context-sync v<version> `schema/graph_schema.json`
+Generated: <YYYY-MM-DD HH:MM> · Graph: `dependency_graph.json` · Schema: plugin graph v<version> `schema/graph_schema.json`
 
 ## 1. Active Task Pointer
 - current_node: `<node_id>` (`<type>`, wip_status: `<status>`), part_of: `<parent>` → `<component>`
@@ -357,9 +374,9 @@ flow. Useful after a batch of registry updates.
 
 | Rule | Content |
 |------|---------|
-| **R1 Cross-reference validation** | `nodes[k].id == k` (fix the key, never the id). Every target of `part_of` / `depends_on` / `affects` / `resolves` / `supersedes` and `current_node` exists. No self-edges. `part_of` ≤ 1 and acyclic. `resolves` only decision → issue; `supersedes` only decision → decision. `source_ref` matches some `config.registries[].id_pattern` when registries are defined. Non-component `code_targets` fall under the union of component `code_targets`. Schema-valid (run `python3 -c "import json,jsonschema;jsonschema.Draft202012Validator(json.load(open('${CLAUDE_SKILL_DIR}/schema/graph_schema.json'))).validate(json.load(open('dependency_graph.json')));print('OK')"` when available; otherwise check manually and say so). |
+| **R1 Cross-reference validation** | `nodes[k].id == k` (fix the key, never the id). Every target of `part_of` / `depends_on` / `affects` / `resolves` / `supersedes` and `current_node` exists. No self-edges. `part_of` ≤ 1 and acyclic. `resolves` only decision → issue; `supersedes` only decision → decision. `source_ref` matches some `config.registries[].id_pattern` when registries are defined. Non-component `code_targets` fall under the union of component `code_targets`. Schema-valid (run `python3 -c "import json,jsonschema;jsonschema.Draft202012Validator(json.load(open('${CLAUDE_SKILL_DIR}/schema/graph_schema.json'))).validate(json.load(open('dependency_graph.json')));print('OK')"` when available; otherwise check manually and say so). Schema self-test: `python3 ${CLAUDE_SKILL_DIR}/schema/fixtures/run_fixtures.py` (positive + negative fixtures; must print all PASS). |
 | **R2 Hydration** | If `dependency_graph.json` exists, never modify code before `/graph:hydrate <node_id>` of the relevant node with every pre-modification check ticked. If the node does not exist, create it first (init refresh or manual addition passing R1). If the user explicitly asks to skip, state the risk in one sentence, log the skip in Unresolved Edges, proceed. |
-| **R3 Handover fidelity** | Sections 1–7 mandatory; verbatim decisions, identifiers, unresolved edges; empty = `- none`. §3 carries its legend; §4 opens with the "Resolved this session" line; every "who resolves" names a trigger or says none (D19). |
+| **R3 Handover fidelity** | Sections 1–7 mandatory; verbatim decisions, identifiers, unresolved edges; empty = `- none`. §3 carries its legend; §4 opens with the "Resolved this session" line; every "who resolves" names a trigger or says none (D19). §2 tables, §6 counts/results and §7 timestamps are generated from the graph, never retyped (D25). |
 | **R4 Interaction language** | Every question, recommendation table, approval request, proposal (split / fold / component) and checklist shown to the user is written in `config.interaction_language` (inferred from CLAUDE.md and the user's messages when unset). Graph contents, handover file, SKILL text stay English. |
 | **R5 Structure follows design docs** | `/graph:init` never generates `task`. Decision / issue nodes exist only when referenced from a document in scope or from registry text of a referenced id. Every decision / issue is attached (`part_of`) to ≥ 1 component / feature / function. |
 | **R6 Footprint** | The skill writes only to: `dependency_graph.json`, the file at `config.handover_path`, the marked block in `CLAUDE.md`, the marked block in `.gitignore`. Never design docs, registries, source code, other handover files, `.claude/settings*.json`, or Claude memory. A write outside the footprint is refused and reported. |

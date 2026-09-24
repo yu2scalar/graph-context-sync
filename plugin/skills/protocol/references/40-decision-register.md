@@ -25,9 +25,13 @@ Design decisions behind the protocol, in the order they were made. Folded = abso
 | D13 | Root closed: `current_node`, `nodes`, `config` only | resolves OP4; supersedes D1 | active |
 | D14 | Staleness check (code newer than docs, missing paths, unknown `source_ref`) | — | active |
 | D15 | First application target: the skill's own repo, then a real project | — | active |
-| D16 | Thin delegating skills per command | supersedes S2 | active (renamed by D21) |
+| D16 | Thin delegating skills per command | supersedes S2 | folded into D21 → D23 |
 | D17 | Component detection = top-level directory listing; S3 governs `code_targets` derivation | supersedes S3 | active |
 | D18 | S5 absorbed into R1 | supersedes S5 | active |
 | D19 | Handover template hardening: legend, "Resolved this session" line, who/when, local-only marker | — | active |
 | D20 | Package as a Claude Code plugin (marketplace + `plugin/`); skill files never enter the project; paths via `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}`; footprint = graph + handover + 2 marked blocks | refines D6 | active |
-| D21 | Delegate skills renamed to `install/uninstall/init/hydrate/handover/compact` → `/graph:<name>`; bare `/graph-*` is impossible for plugin skills | refines D16 | active |
+| D21 | Delegate skills renamed to `install/uninstall/init/hydrate/handover/compact` under the plugin namespace; bare `/graph-*` is impossible for plugin skills | refines D16 | folded into D23 |
+| D22 | Protocol skill renamed `graph-context-sync` → `protocol` (was registering as `graph-context-sync:graph-context-sync`) | — | active |
+| D23 | Plugin name shortened to `graph` (marketplace stays `graph-context-sync`): commands read `/graph:hydrate`, `/graph:init`, …; install string `graph@graph-context-sync` | refines D21 (folded D21, D16, S2) | active |
+| D24 | Content-based staleness in addition to timestamps: registry ↔ graph (unindexed ids, orphan `source_ref`, lost `folded` ids), docs-only nodes compared with the code of their parent / affected nodes, shipped registers treated as code + registry | extends D14 | active |
+| D25 | Handover §2 tables, §6 counts/results and §7 timestamps are generated from the graph, never retyped; manual rows marked `(manual)` | extends D19 | active |

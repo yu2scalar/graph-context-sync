@@ -1,5 +1,5 @@
 {
   "enabledPlugins": {
-    "graph-context-sync@graph-context-sync": true
+    "graph@graph-context-sync": true
   }
 }

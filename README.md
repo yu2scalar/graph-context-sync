@@ -12,7 +12,7 @@ content): components, design-document structure, decisions, issues, and the rela
 the relevant 1-hop / 2-hop neighbourhood to be loaded before any code change and writes lossless handovers when
 work pauses.
 
-Current version: **3.1.0**. Plugin name `graph`, marketplace `graph-context-sync` (this repository).
+Current version: **3.1.1**. Plugin name `graph`, marketplace `graph-context-sync` (this repository).
 
 ## Commands
 

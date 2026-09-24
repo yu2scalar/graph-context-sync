@@ -6,7 +6,7 @@ arguments: [flags]
 
 # /graph:init
 
-> Status: v3.1.0 (2026-09-24 — plugin renamed `graph`, protocol skill renamed `protocol`; v3.0.0 = plugin packaging)
+> Status: v3.1.1 (2026-09-24 — wording fix for no-argument delegates, D24 content staleness, D25 generated handover tables; v3.1.0 = plugin `graph`; v3.0.0 = plugin packaging)
 
 Thin delegating command. Do not improvise its behaviour here.
 
