@@ -1,2 +1,5 @@
 # generated handover state
 .context/
+# graph-context-sync:begin
+.context/
+# graph-context-sync:end
