@@ -1,89 +1,105 @@
 # graph-context-sync
 
-A [Claude Code](https://claude.com/claude-code) skill for graph-based project context management.
+A [Claude Code](https://claude.com/claude-code) plugin for graph-based project context management.
 
-It exists to prevent two failure modes that become untrackable once a codebase is too large to "just
-read the code": **duplicate or similar implementations** written because a session did not know an
-existing component already covered the need, and **forgotten updates** where code changed but the design
-document or decision governing it did not.
+It exists to prevent two failure modes that become untrackable once a codebase is too large to "just read the
+code": **duplicate or similar implementations** written because a session did not know an existing component
+already covered the need, and **forgotten updates** where code changed but the design document or decision
+governing it did not.
 
-The skill keeps `dependency_graph.json`, a schema-validated **index** over the project (never a copy of its
-content): components, design-document structure, decisions, issues, and the relations between them. It
-forces the relevant 1-hop / 2-hop neighbourhood to be loaded before any code change and writes lossless
-handovers when work pauses.
+The plugin keeps `dependency_graph.json`, a schema-validated **index** over your project (never a copy of its
+content): components, design-document structure, decisions, issues, and the relations between them. It forces
+the relevant 1-hop / 2-hop neighbourhood to be loaded before any code change and writes lossless handovers when
+work pauses.
 
-## Contents
-
-```
-.claude/skills/
-├── graph-context-sync/
-│   ├── SKILL.md                              # protocol: 6 sub-commands, 8 enforced rules, handover template
-│   ├── schema/graph_schema.json              # JSON Schema (draft 2020-12) for dependency_graph.json
-│   └── templates/graph_context.template.json # minimal valid seed graph
-├── graph-install/SKILL.md                    # thin delegating commands so /graph-init etc.
-├── graph-uninstall/SKILL.md                  # work as direct slash commands
-├── graph-init/SKILL.md
-├── graph-hydrate/SKILL.md
-├── graph-handover/SKILL.md
-└── graph-compact/SKILL.md
-```
-
-## Install into a project
-
-Copy the skill directory, then let the skill do the rest with a bounded, reversible footprint:
-
-```bash
-mkdir -p .claude/skills
-cp -r /path/to/graph-context-sync/.claude/skills/graph-* .claude/skills/
-```
-
-Then in Claude Code: `/graph-install` (appends one marked block to `CLAUDE.md` and `.gitignore`, creates the
-seed graph, records checksums) followed by `/graph-init` (analyses the project, recommends settings, asks,
-builds the graph). `/graph-uninstall` removes exactly that footprint and verifies the files are restored
-byte-identical.
+Current version: **3.0.0**.
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `/graph-install` | Create the seed graph, append marked blocks to `CLAUDE.md` / `.gitignore`, snapshot checksums. |
-| `/graph-uninstall` | Remove the footprint, strip the marked blocks, verify byte-identical restoration. |
-| `/graph-init [--reconfigure] [--reset-structure]` | Analyse the project, recommend and ask for `config` (design root, registries, handover path, language, components), derive the graph from design docs and registries. Idempotent; preserves human decisions unless `--reset-structure`. |
-| `/graph-hydrate <node_id>` | Load the node plus 1-hop / 2-hop neighbours over every edge kind, read every referenced file, and emit the Impact Assessment Checklist: components, subgraph, inherited decision constraints, decisions to re-examine, existing capabilities, stale docs, blast radius. |
-| `/graph-handover` | Update the graph, propose splits (growth) and folds (compaction), run the staleness check, write the handover with Active Task Pointer, Components + Subgraph, Hard Decisions Log, Unresolved Edges, Immediate Resume Trigger, Decision Drift, Staleness. |
-| `/graph-compact` | Run the fold check on demand. |
+| `/graph-context-sync:install` | Seed `dependency_graph.json`, append one marked block each to `CLAUDE.md` and `.gitignore`, snapshot checksums. Nothing else is written to your project. |
+| `/graph-context-sync:init [--reconfigure] [--reset-structure]` | Analyse the project, recommend and ask for `config` (design root, registries, handover path, language, components), derive the graph from design docs and registries. Idempotent; preserves human decisions unless `--reset-structure`. |
+| `/graph-context-sync:hydrate <node_id>` | Load the node plus 1-hop / 2-hop neighbours over every edge kind, read every referenced file, and emit the Impact Assessment Checklist: components, subgraph, inherited decision constraints, decisions to re-examine, existing capabilities, stale docs, blast radius. Required before modifying code. |
+| `/graph-context-sync:handover` | Update the graph, propose splits (growth) and folds (compaction), run the staleness check, write the handover: Active Task Pointer, Components + Subgraph, Hard Decisions Log, Unresolved Edges, Immediate Resume Trigger, Decision Drift, Staleness. |
+| `/graph-context-sync:compact` | Run the fold check on demand. |
+| `/graph-context-sync:uninstall` | Remove the footprint, strip the marked blocks, verify byte-identical restoration, then tell you how to remove the plugin. |
+
+Questions, recommendations and approvals are asked in your project's language (`config.interaction_language`);
+graph contents and handover files are English.
+
+## Install
+
+```bash
+# At the Claude Code prompt
+/plugin marketplace add yu2scalar/graph-context-sync
+/plugin install graph-context-sync@graph-context-sync
+/reload-plugins                # or restart the session
+```
+
+Then, inside the project you want to index: `/graph-context-sync:install` followed by `/graph-context-sync:init`.
+
+## Update
+
+```bash
+/plugin marketplace update graph-context-sync   # fetch the latest from GitHub
+/reload-plugins                                  # apply it to the session
+```
+
+## Uninstall
+
+```bash
+# inside each project first (reversible footprint):
+/graph-context-sync:uninstall
+# then the plugin itself:
+/plugin uninstall graph-context-sync@graph-context-sync
+/plugin marketplace remove graph-context-sync
+/reload-plugins
+```
+
+## What gets written into your project
+
+Only these, all removable by `/graph-context-sync:uninstall`:
+
+| Path | Purpose |
+|------|---------|
+| `dependency_graph.json` | the graph and its `config` |
+| `config.handover_path` (default `.context/WIP_HANDOVER.md`) | the handover |
+| one marked block in `CLAUDE.md` | the protocol instructions for Claude |
+| one marked block in `.gitignore` | ignores `.context/` |
+
+The skill files themselves stay in the plugin cache.
 
 ## Graph model
 
 **Hierarchy**: Root → `component` → `feature` → `function`. `decision` and `issue` nodes attach to the
 structure. Root holds only `current_node`, `nodes`, `config`.
 
-**Edges**: `part_of` (child → parent, at most one), `depends_on`, `affects`, `resolves`
-(decision → issue), `supersedes` (decision → decision).
+**Edges**: `part_of` (child → parent, at most one), `depends_on`, `affects`, `resolves` (decision → issue),
+`supersedes` (decision → decision).
 
 **Registry linkage**: decision / issue nodes carry `source_ref` (e.g. `D-022`, `TBD-24`); `config.registries`
-says how such ids are recognised and which file holds their text. The graph indexes the registry, it does
-not duplicate it.
+says how such ids are recognised and which file holds their text.
 
-**Growth**: a feature starts as one node. When attached decisions and issues reach `config.growth_threshold`
-(default 5), or a decision applies to only part of it, the handover proposes splitting it into `function`
-children; the parent becomes an index node.
+**Growth and compaction**: a feature starts as one node and is split into `function` children when attached
+decisions and issues reach `config.growth_threshold`; superseded decisions and resolved issues are folded into
+the surviving decision (`folded`). Both are proposals that need your approval.
 
-**Compaction**: superseded decisions and resolved issues are folded into the surviving decision
-(`folded: ["D-010", "TBD-03"]`) on approval, so the graph holds final decisions while the registry keeps history.
+Full data model and the public decision register: `plugin/skills/graph-context-sync/references/`.
 
-**Rebuild**: change `config` (for example the threshold) and re-run `/graph-init`; add `--reset-structure` to
-re-propose splits and folds from scratch.
+## Repository layout
 
-Validate a graph:
-
-```bash
-python3 -c "import json,jsonschema;jsonschema.Draft202012Validator(json.load(open('.claude/skills/graph-context-sync/schema/graph_schema.json'))).validate(json.load(open('dependency_graph.json')));print('OK')"
+```
+.claude-plugin/marketplace.json
+plugin/
+├── .claude-plugin/plugin.json
+└── skills/
+    ├── graph-context-sync/      # protocol: SKILL.md, schema/, templates/, references/
+    ├── install/  uninstall/  init/  hydrate/  handover/  compact/   # thin delegating commands
 ```
 
 ## Enforced rules
 
 R1 cross-reference validation · R2 hydrate before modifying code · R3 handover fidelity ·
-R4 interaction language (artifacts in English, questions in the user's language) · R5 structure follows
-design docs · R6 bounded footprint · R7 components always visible · R8 no reinvention.
-See `SKILL.md` for the full text.
+R4 interaction language · R5 structure follows design docs · R6 bounded footprint ·
+R7 components always visible · R8 no reinvention. Full text in `plugin/skills/graph-context-sync/SKILL.md`.

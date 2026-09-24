@@ -1,0 +1,7 @@
+# sync-source
+
+- `10-data-model.md` mirrors `../schema/graph_schema.json`. The schema is authoritative; update the schema first,
+  then this file.
+- `40-decision-register.md` is the public projection of the maintainer's local planning documents
+  (`docs/plan-graph-context-sync-*.md`, not published). User quotes and session logs are intentionally omitted here.
+- Version: `plugin/.claude-plugin/plugin.json` → `version`; each SKILL.md repeats it in its `> Status:` line.
