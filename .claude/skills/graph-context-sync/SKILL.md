@@ -149,6 +149,9 @@ Run when `config` is incomplete or `--reconfigure` is given.
      `component` node each with `code_targets` = that directory; the primary source tree (e.g. `src/`)
      becomes `core` unless the user names it otherwise. The user confirms names, paths, and may add or
      remove components. Proposing a component is always a user decision (R8).
+     Scope note (D17): component detection is a *listing of top-level directory names* only. It never
+     reads source files. The "no blind source walk" rule (S3) governs how `code_targets` are derived in
+     Step 2 (from paths referenced by design documents), not this listing.
 2. Persist answers to `config` and create the component nodes.
 
 ### Step 1 — load and preserve
