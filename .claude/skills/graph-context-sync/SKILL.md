@@ -299,7 +299,7 @@ Generated: <YYYY-MM-DD HH:MM> · Graph: `dependency_graph.json` · Schema: `.cla
 - Work completed this session (file-level):
   - `<path>`: <what changed>
 - Work NOT yet done:
-  - <item>
+  - <item> (if it depends on a file that is untracked / local-only, say so: a fresh session may not have it)
 
 ## 2. Components and Subgraph Context Range
 ### Components (R7)
@@ -312,11 +312,13 @@ Files read outside the subgraph (candidates to add to the graph):
 - `<path>` — <reason>
 
 ## 3. Hard Decisions Log
+Legend: `#` = order reached this session (not a registry id). `—` in "Fixed identifiers" = no new identifier introduced. Quote the user verbatim in "Reason"; a paraphrase must be marked as such.
 | # | Decision | Chosen | Rejected alternatives | Reason (as stated) | Fixed identifiers | Registry id (if logged) |
 |---|----------|--------|-----------------------|--------------------|-------------------|-------------------------|
 
 ## 4. Unresolved Edges
-| # | From node | To node / file | Kind | What is unresolved | Who or what resolves it |
+Resolved this session and removed from this table: <ids and how, or `- none`>
+| # | From node | To node / file | Kind | What is unresolved | Who or what resolves it (and when / on what trigger) |
 |---|-----------|----------------|------|--------------------|-------------------------|
 
 ## 5. Immediate Resume Trigger
@@ -350,7 +352,7 @@ flow. Useful after a batch of registry updates.
 |------|---------|
 | **R1 Cross-reference validation** | `nodes[k].id == k` (fix the key, never the id). Every target of `part_of` / `depends_on` / `affects` / `resolves` / `supersedes` and `current_node` exists. No self-edges. `part_of` ≤ 1 and acyclic. `resolves` only decision → issue; `supersedes` only decision → decision. `source_ref` matches some `config.registries[].id_pattern` when registries are defined. Non-component `code_targets` fall under the union of component `code_targets`. Schema-valid (run `python3 -c "import json,jsonschema;jsonschema.Draft202012Validator(json.load(open('.claude/skills/graph-context-sync/schema/graph_schema.json'))).validate(json.load(open('dependency_graph.json')));print('OK')"` when available; otherwise check manually and say so). |
 | **R2 Hydration** | If `dependency_graph.json` exists, never modify code before `/graph-hydrate <node_id>` of the relevant node with every pre-modification check ticked. If the node does not exist, create it first (init refresh or manual addition passing R1). If the user explicitly asks to skip, state the risk in one sentence, log the skip in Unresolved Edges, proceed. |
-| **R3 Handover fidelity** | Sections 1–7 mandatory; verbatim decisions, identifiers, unresolved edges; empty = `- none`. |
+| **R3 Handover fidelity** | Sections 1–7 mandatory; verbatim decisions, identifiers, unresolved edges; empty = `- none`. §3 carries its legend; §4 opens with the "Resolved this session" line; every "who resolves" names a trigger or says none (D19). |
 | **R4 Interaction language** | Every question, recommendation table, approval request, proposal (split / fold / component) and checklist shown to the user is written in `config.interaction_language` (inferred from CLAUDE.md and the user's messages when unset). Graph contents, handover file, SKILL text stay English. |
 | **R5 Structure follows design docs** | `/graph-init` never generates `task`. Decision / issue nodes exist only when referenced from a document in scope or from registry text of a referenced id. Every decision / issue is attached (`part_of`) to ≥ 1 component / feature / function. |
 | **R6 Footprint** | The skill writes only to: its own directory, the six delegating skill directories (`.claude/skills/graph-*/`), `dependency_graph.json`, the file at `config.handover_path`, the marked block in `CLAUDE.md`, the marked block in `.gitignore`. Never design docs, registries, source code, other handover files, `.claude/settings*.json`, or Claude memory. A write outside the footprint is refused and reported. |
