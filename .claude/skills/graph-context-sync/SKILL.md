@@ -1,130 +1,253 @@
 ---
 name: graph-context-sync
-description: Graph-based project context management. Use for /graph-init (build or refresh dependency_graph.json from docs/), /graph-hydrate <node_id> (load 1-hop and 2-hop dependencies and produce an Impact Assessment Checklist before touching code), and /graph-handover (update the graph and write .context/WIP_HANDOVER.md without lossy summarization). Also triggers on "dependency graph", "hydrate node", "handover", "WIP handover", "context graph".
+description: Graph-based project context management (v2). Keeps dependency_graph.json as a schema-validated index over a project's components, design documents and decision/issue registries, forces 1-hop/2-hop hydration before code changes, and writes lossless handovers. Sub-commands: /graph-install, /graph-uninstall, /graph-init, /graph-hydrate <node_id>, /graph-handover, /graph-compact. Also triggers on "dependency graph", "hydrate node", "handover", "WIP handover", "context graph", "graph init", "compact graph".
 ---
 
-# graph-context-sync
+# graph-context-sync (v2)
 
-Protocol for keeping an explicit, machine-checkable graph of project context and for
-loading the right slice of that graph before any code change.
+## Purpose
+
+Two failure modes this skill exists to prevent, both of which become untrackable once a codebase is
+large enough that "just read the code" stops working:
+
+1. **Duplicate or similar implementations**, typically because a session did not know an existing
+   component or function already covered the need.
+2. **Forgotten updates**: code changed, the design document or decision that governs it did not.
+
+It does so by keeping an explicit, machine-checkable **index graph** over the project. The graph never
+holds content; it holds references to where the content lives and the relations between them.
 
 ## Files
 
 | Path | Role |
 |------|------|
-| `dependency_graph.json` (project root) | The graph. Must validate against the schema below. |
-| `.claude/skills/graph-context-sync/schema/graph_schema.json` | JSON Schema (draft 2020-12) for the graph. |
-| `.claude/skills/graph-context-sync/templates/graph_context.template.json` | Minimal valid seed graph (`current_node: null`, `nodes: {}`). |
-| `.context/WIP_HANDOVER.md` | Handover document written by `/graph-handover`. |
+| `dependency_graph.json` (project root) | The graph. Must validate against the schema. |
+| `.claude/skills/graph-context-sync/schema/graph_schema.json` | JSON Schema, draft 2020-12. Authoritative for shapes. |
+| `.claude/skills/graph-context-sync/templates/graph_context.template.json` | Minimal valid seed graph. |
+| `config.handover_path` (default `.context/WIP_HANDOVER.md`) | Handover written by `/graph-handover`. |
 
-Node shape (see schema for the authoritative definition):
+## Data model (summary; schema is authoritative)
 
-- required: `id`, `type` (`feature` | `decision` | `task` | `issue`), `name`, `docs[]`, `code_targets[]`
-- optional: `depends_on[]`, `affects[]`, `wip_status` (`DONE` | `IN_PROGRESS` | `BLOCKED`)
-- ids match `^[a-z0-9][a-z0-9_-]*$`
+**Root** is closed: `current_node`, `nodes`, `config` only.
+
+**Hierarchy**: Root → `component` → `feature` → `function`. `decision` and `issue` nodes attach to a
+component, feature or function. `task` exists for manual use and is never generated.
+
+**Node fields**: required `id`, `type`, `name`, `docs[]`, `code_targets[]`. Optional edges:
+`part_of` (≤1, child → parent), `depends_on`, `affects`, `resolves` (decision → issue only),
+`supersedes` (decision → decision only). Optional `source_ref` (registry id, decision/issue only,
+single-valued), `folded[]` (registry ids absorbed by compaction, decision only), `wip_status`.
+
+**Edge direction conventions**
+
+| Relation | Edge |
+|----------|------|
+| feature belongs to component / function belongs to feature | child `part_of` parent |
+| feature needs another feature | `depends_on` |
+| feature/function expects something from another component | `depends_on` → that component's function/feature node |
+| issue impacts a feature/function/component | issue `affects` target |
+| decision constrains a feature/function/component | decision `affects` target |
+| decision resolves an issue | decision `resolves` issue |
+| decision replaces or refines an earlier decision | decision `supersedes` earlier decision |
+| issue was raised by a decision | issue `depends_on` decision |
+
+**`config` keys**
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `interaction_language` | inferred | language for every question, recommendation, approval, checklist shown to the user |
+| `handover_path` | `.context/WIP_HANDOVER.md` | where `/graph-handover` writes |
+| `design_root` | detected | directory whose document structure the feature/function layer mirrors |
+| `docs_scope` | `<design_root>/**/*.md` | globs `/graph-init` reads |
+| `registries[]` | `[]` | `{type, id_pattern, file}`: how decision/issue ids are recognised and where their text lives |
+| `growth_threshold` | 5 | attached decision+issue count at which a split is proposed |
+| `install` | set by install | sha256 snapshots for uninstall verification |
+
+Not in config, by decision: `code_roots` (derived: union of component nodes' `code_targets`),
+`project_name`, `version` (git / CLAUDE.md own them).
 
 ## Command recognition
 
-The three commands below are sub-commands of this skill. Treat any of the following as an
-invocation: `/graph-init`, `/graph-hydrate <node_id>`, `/graph-handover`, or
-`/graph-context-sync <init|hydrate <node_id>|handover>`. Natural-language requests such as
-"rebuild the dependency graph", "hydrate the auth node", or "write the handover" map to the
-same commands.
+Treat any of these as an invocation: `/graph-install`, `/graph-uninstall`, `/graph-init`,
+`/graph-hydrate <node_id>`, `/graph-handover`, `/graph-compact`, or
+`/graph-context-sync <install|uninstall|init|hydrate <node_id>|handover|compact>`. Natural-language
+equivalents ("rebuild the dependency graph", "hydrate the commit-protocol node", "write the handover",
+"compact the decisions") map to the same commands.
 
 ---
 
-## `/graph-init`
+## `/graph-install`
 
-Purpose: generate `dependency_graph.json` if absent, or refresh it if present, so that it
-matches `graph_schema.json`.
+Purpose: put the skill into a host project with a bounded, reversible footprint (rule R6).
 
-### Procedure
+1. If invoked from the upstream repo, copy `.claude/skills/graph-context-sync/` into the target.
+2. Record sha256 of the target's `CLAUDE.md` and `.gitignore` as they are now (null if absent).
+3. Create `dependency_graph.json` from the template if absent.
+4. Append to `CLAUDE.md` (create if absent) exactly one marked block:
+   ```markdown
+   <!-- graph-context-sync:begin -->
+   ## CRITICAL PROTOCOL (graph-context-sync)
+   - You must strictly follow the skill rules defined in `.claude/skills/graph-context-sync/SKILL.md`.
+   - Before modifying any feature or fixing bugs, verify if `dependency_graph.json` exists. If so, invoke the logic of `/graph-hydrate <node_id>` to load 1-hop/2-hop dependencies first.
+   - When ending a session or pausing work, invoke `/graph-handover` to generate the handover at `config.handover_path`. Never write lossy, generic summaries.
+   - Registry mapping (decision / issue ids → files) = `dependency_graph.json` → `config.registries`.
+   <!-- graph-context-sync:end -->
+   ```
+5. Append to `.gitignore` (create if absent) exactly one marked block:
+   ```
+   # graph-context-sync:begin
+   .context/
+   # graph-context-sync:end
+   ```
+   Omit the `.context/` line if `config.handover_path` will live in a tracked directory; keep the markers.
+6. Write `config.install` `{installed_at, skill_version, claude_md_sha256_before, gitignore_sha256_before}`.
+7. Print the footprint (every path created or modified). Ask, in the interaction language, before writing anything.
 
-1. **Load existing graph.** If `dependency_graph.json` exists, read it and validate it
-   (see Enforced Rules). Keep every existing node, edge, `wip_status`, and `current_node`
-   unless a scanned source contradicts it. Never drop a node just because a scan did not
-   re-discover it; mark it in the report instead.
-   If absent, start from `templates/graph_context.template.json`.
-2. **Scan `docs/`.** Read every `docs/**/*.md`. For each document, identify candidate
-   nodes:
-   - plan / design / spec documents → `feature` or `task`
-   - ADRs, "Decision" sections, decision tables → `decision`
-   - bug reports, known-issue lists, TODO/FIXME sections → `issue`
-   Record the document path in the node's `docs`.
-3. **Follow references from docs into code.** Collect every project-relative file path
-   mentioned in the scanned docs (code blocks, inline code, tables, links). Read each file
-   that exists and assign it to the `code_targets` of the node(s) whose doc referenced it.
-   Do **not** walk the source tree blindly. A file that no doc mentions is out of scope for
-   init; it can be added later by `/graph-handover`.
-4. **Derive edges.**
-   - `depends_on`: explicit "depends on", "requires", "after", "blocked by", "based on"
-     phrasing, or a doc that cites another node's doc as a prerequisite.
-   - `affects`: explicit "affects", "impacts", "changes", "breaks" phrasing, or shared
-     `code_targets` between two nodes (the node that owns the file is affected by the node
-     that modifies it).
-   Every edge target must be a node id that exists in `nodes`. If the target does not exist
-   yet, create it as a stub node (`type` inferred, `docs`/`code_targets` may be empty) rather
-   than emitting a dangling edge.
-5. **Assign ids.** kebab-case or snake_case, lowercase, derived from the document or feature
-   name. The object key in `nodes` must be identical to `node.id`.
-6. **Validate and write.** Run the Enforced Rules checks. Write `dependency_graph.json` with
-   2-space indentation and keys in the order: `$schema` (optional), `current_node`, `nodes`.
-7. **Report.** Output a table of nodes added / updated / unchanged / not-rediscovered, and
-   the list of edges added. Do not silently change `current_node`; if the existing graph has
-   one, keep it.
+## `/graph-uninstall`
+
+1. Compute the footprint: the skill directory, `dependency_graph.json`, the file at `config.handover_path`
+   (and `.context/` if that is its directory and it is otherwise empty), the marked block in `CLAUDE.md`,
+   the marked block in `.gitignore`.
+2. Show the list with a per-path action (delete file / strip block / delete empty dir) and whether the path
+   is git-tracked. Ask for approval.
+3. On approval: delete files and dirs the skill created; strip exactly the text between and including the
+   markers (plus one trailing newline) from `CLAUDE.md` and `.gitignore`; if a file becomes empty and the
+   skill created it, delete it.
+4. Verify: sha256 of `CLAUDE.md` and `.gitignore` now equal `config.install.*_before` (null = file should
+   not exist). Report "restored byte-identical" or list differences (which can only come from user edits
+   outside the markers; those are kept).
+5. Warn once if any removed path was git-tracked so the user can `git rm` in the same commit.
+
+Nothing outside the footprint is ever touched. Anything Claude stored in its own memory cannot be
+uninstalled, so the skill never writes memory (R6).
+
+---
+
+## `/graph-init [--reconfigure] [--reset-structure]`
+
+Purpose: create or refresh `dependency_graph.json`. Idempotent (F8).
+
+### Step 0 — project analysis and configuration Q&A
+Run when `config` is incomplete or `--reconfigure` is given.
+
+1. Detect and tabulate, then **recommend and ask** (interaction language):
+   - `design_root`: candidates `docs/design/`, `design/`, `docs/`, `doc/`; prefer the one with a README or
+     index and the most cross-references.
+   - `docs_scope`: default `<design_root>/**/*.md`; offer to add plan / handover docs if found.
+   - `registries`: files matching `decision-log*`, `adr*`, `decisions*` → type decision; `tbd*`, `issues*`,
+     `open-questions*` → type issue. Derive `id_pattern` from ids actually present (e.g. `^D-\d{3}$`,
+     `^TBD-\d{2}$`) and show three sample ids per registry as evidence.
+   - `handover_path`: if the repo already commits handover documents under a docs folder, recommend
+     `<that folder>/WIP_HANDOVER.md` (tracked); otherwise `.context/WIP_HANDOVER.md` (ignored).
+   - `interaction_language`: infer from `CLAUDE.md` and recent user messages; confirm.
+   - `growth_threshold`: default 5; state that it can be changed later and the graph rebuilt.
+   - **components**: top-level directories that contain build files or sources, excluding `build/`,
+     `.gradle/`, `.idea/`, `node_modules/`, `target/`, `dist/`, `.git/`, docs folders. Propose one
+     `component` node each with `code_targets` = that directory; the primary source tree (e.g. `src/`)
+     becomes `core` unless the user names it otherwise. The user confirms names, paths, and may add or
+     remove components. Proposing a component is always a user decision (R8).
+2. Persist answers to `config` and create the component nodes.
+
+### Step 1 — load and preserve
+If the graph exists, validate it (R1). Preserve `current_node`, `wip_status`, `part_of`, `folded`, `config`
+unless `--reset-structure` (which discards `part_of` and `folded` and re-proposes splits/folds under the
+current `growth_threshold`). Never drop a node because a scan did not rediscover it; report it instead.
+
+### Step 2 — derive structure from design docs (R5)
+For each document in `docs_scope`:
+- One `feature` node per design document, `part_of` the component whose `code_targets` its referenced
+  code falls under (ask if ambiguous; an index/overview document becomes `docs` of the component instead
+  of a feature).
+- A document with clearly separate top-level sections may yield `function` children; do **not** split on
+  first init unless the structure is explicit. Splitting is normally a growth proposal at handover.
+- Collect project-relative code paths mentioned in the document (code spans, tables, links) into
+  `code_targets`; each must fall under some component's roots, otherwise report it as unplaced.
+- Never generate `task` nodes.
+
+### Step 3 — decisions and issues (R5, OP1 = C)
+Scan the documents in scope and the registry files for ids matching `config.registries[].id_pattern`.
+Create a `decision` / `issue` node **only** when the id is referenced from a document in scope or from the
+registry text of another referenced id. Set `source_ref` verbatim; `docs` = the registry file; `part_of`
+= the feature/function/component whose document referenced it (component when cross-cutting).
+
+### Step 4 — edges
+- `affects`: decision/issue → the nodes whose documents reference it.
+- `resolves`: from registry text such as "resolves TBD-24", "closes", "決定により解消", or a TBD entry that
+  names the D-id that closed it.
+- `supersedes`: from registry text such as "supersedes D-010", "replaces", "上書き", "置き換え".
+- `depends_on`: from explicit "depends on / requires / after / blocked by / 前提" phrasing; for
+  cross-component expectations, target the providing component's function/feature; create a stub node under
+  the **providing** component if it does not exist (never under the requesting one).
+- Every edge target must exist; create stubs rather than dangling edges.
+
+### Step 5 — validate, diff, write, report
+Run R1. Show a before/after diff (nodes added / updated / removed / merged; edges added) in the interaction
+language and ask before writing. Write with 2-space indentation, key order `$schema`, `current_node`,
+`nodes`, `config`. Report nodes not rediscovered and code paths not placed under any component.
 
 ---
 
 ## `/graph-hydrate <node_id>`
 
-Purpose: load the full 1-hop and 2-hop neighbourhood of `<node_id>` into working context and
-produce an Impact Assessment Checklist **before any code modification**.
+Purpose: load the full 1-hop / 2-hop neighbourhood and produce the Impact Assessment Checklist
+**before any code modification** (R2).
 
-### Procedure
-
-1. **Resolve the node.** Read `dependency_graph.json`. If `<node_id>` is not a key of
-   `nodes`, stop and list the closest matching ids; do not guess.
-2. **Compute the subgraph.**
-   - hop 0: `<node_id>`
-   - hop 1: every id in the node's `depends_on` and `affects`, plus every node whose
-     `depends_on` or `affects` contains `<node_id>` (reverse edges)
-   - hop 2: apply the same expansion to every hop-1 node
-   Deduplicate. Record the hop distance of each node.
-3. **Read every referenced file.** For each node in hops 0–2, read every path in `docs` and
-   `code_targets` with the file reading tool. Do not skim or sample; if a file is very large,
-   read it in ranges until covered. Note any path that does not exist on disk.
-4. **Set `current_node`.** Update `current_node` in `dependency_graph.json` to `<node_id>`
-   and, if its `wip_status` is absent or `DONE`, leave `wip_status` untouched until the user
-   confirms work has started.
-5. **Output the Impact Assessment Checklist** in exactly this shape:
+1. Resolve `<node_id>`; if absent, list the closest ids and stop. Do not guess.
+2. Subgraph: hop 0 = the node; hop 1 = every target and every source of any edge kind
+   (`part_of` both directions, `depends_on`, `affects`, `resolves`, `supersedes`); hop 2 = same expansion
+   from hop 1. Record hop distance and the edge path.
+3. Read every `docs` and `code_targets` path of every node in hops 0–2 in full (ranges for large files).
+   For `decision`/`issue` nodes, read the `source_ref` entry in the registry file. Note missing paths.
+4. Set `current_node` = `<node_id>`.
+5. Staleness (F10): for each node in the subgraph, compare the newest git commit touching any
+   `code_targets` with the newest touching any `docs` (registry file for decision/issue). Fall back to mtime
+   without git. Flag code-newer-than-docs, missing paths, and `source_ref` not found in the registry file.
+6. Output the checklist in exactly this shape:
 
 ```markdown
 ## Impact Assessment Checklist — <node_id>
 
+### Components (always shown — R7)
+| id | name | roots | overview doc | wip |
+|----|------|-------|--------------|-----|
+
 ### Subgraph
-| hop | id | type | wip_status | edge from origin |
+| hop | id | type | wip_status | path from origin |
 |-----|----|------|------------|------------------|
-| 0 | <node_id> | ... | ... | — |
-| 1 | ... | ... | ... | depends_on / affects / reverse-depends_on / reverse-affects |
-| 2 | ... | ... | ... | via <hop-1 id> |
 
 ### Files loaded
-| node | kind | path | status |
-|------|------|------|--------|
-| ... | docs / code_targets | ... | read / MISSING |
+| node | kind | path | status (read / MISSING) |
+|------|------|------|--------------------------|
 
 ### Constraints inherited from decisions
-- <one bullet per `decision` node in the subgraph: the decision, verbatim identifiers it fixes>
+- <one bullet per decision in hops 0–2: source_ref, what it fixes verbatim, folded ids if any>
+
+### Decisions to re-examine
+For each decision D in hops 0–1: affects(D) ∪ resolves(D) ∪ decisions that supersede / are superseded by D
+∪ decisions attached (part_of) to the same feature/function.
+| decision | why it may drift | related |
+|----------|------------------|---------|
+
+### Existing capabilities (R8)
+Nodes across ALL components whose name / docs / code_targets overlap the task at hand.
+| id | component | what it already provides |
+|----|-----------|--------------------------|
+
+### Stale docs (F10)
+| node | code last changed | docs last changed | finding |
+|------|-------------------|-------------------|---------|
 
 ### Blast radius
-- Files in hop-0 `code_targets` that also appear in another node's `code_targets`: ...
-- Nodes with `wip_status: IN_PROGRESS` or `BLOCKED` in the subgraph: ...
+- Shared code_targets with other nodes: ...
+- IN_PROGRESS / BLOCKED nodes in the subgraph: ...
 
 ### Pre-modification checks
-- [ ] All hop-1 and hop-2 files read (no MISSING rows, or each MISSING row acknowledged)
+- [ ] All hop-1 and hop-2 files read (or each MISSING row acknowledged)
+- [ ] Existing capabilities reviewed; no duplicate implementation planned
+- [ ] Decisions to re-examine acknowledged
+- [ ] Stale docs acknowledged (will be updated in this change or logged as unresolved)
 - [ ] No conflicting IN_PROGRESS work on shared code_targets
-- [ ] Decision constraints above will be honoured
-- [ ] `current_node` set to <node_id>
+- [ ] current_node set
 ```
 
 Only after every box can be ticked may code modification begin.
@@ -133,112 +256,97 @@ Only after every box can be ticked may code modification begin.
 
 ## `/graph-handover`
 
-Purpose: persist the exact state of work so a fresh session can resume with zero
-re-discovery.
+Purpose: persist the exact state of work so a fresh session resumes with zero re-discovery.
 
-### Procedure
+1. **Update the graph**: `current_node` (or null if complete); `wip_status` of touched nodes; new edges,
+   nodes, `docs`, `code_targets` discovered this session; validate (R1).
+2. **Growth check (F2')**: for each feature/function in the subgraph, propose a split when
+   (a) attached decision+issue nodes ≥ `config.growth_threshold`, or (b) a decision's scope covers only part
+   of the node's `code_targets`, or (c) its design document gained ≥ 2 top-level sections describing separate
+   behaviours. On approval: create `function` children with `part_of` the node, move the relevant `docs`,
+   `code_targets` and decision/issue attachments to them, leave the parent with overview docs only.
+3. **Fold check (F7 = C)**: candidates are (i) a decision that is a `supersedes` target and has no other live
+   in-edges, (ii) an issue that is a `resolves` target and has no other live in-edges. Never fold a node with
+   `wip_status` IN_PROGRESS or BLOCKED. On approval: survivor.`folded` += folded `source_ref`s;
+   survivor.`affects` ∪= folded.`affects`; survivor.`docs` ∪= folded.`docs`; delete the folded node and edges
+   to it. Text stays in the registry, so nothing is lost overall.
+4. **Staleness (F10)** as in hydrate step 5, over the touched nodes.
+5. **Write the handover** to `config.handover_path` (create the directory if needed; overwrite; the graph is
+   the durable history, the handover is the live pointer) using the template below.
+6. **Fidelity (R3)**: preserve verbatim every explicit technical decision and its reason, every identifier
+   chosen or renamed (variable, function, class, file, config key, schema field, enum value, CLI flag), and
+   every edge discussed but not resolved. Name the option chosen and the options rejected. Never write
+   "refactored X" or "various fixes". Empty sections are written as `- none`.
 
-1. **Update the graph.**
-   - `current_node`: the node being worked on, or `null` if work is fully complete.
-   - `wip_status` of the current node and any node touched this session: `DONE`,
-     `IN_PROGRESS`, or `BLOCKED`.
-   - Edges: add any `depends_on` / `affects` discovered during the work. Add new nodes for
-     newly discovered decisions or issues. Add newly touched files to `code_targets` and newly
-     written docs to `docs`.
-   - Validate against the Enforced Rules, then write.
-2. **Write `.context/WIP_HANDOVER.md`** using the Handover Template below. Create the
-   `.context/` directory if needed. Overwrite the previous handover; the graph is the durable
-   history, the handover is the live pointer.
-3. **Fidelity rule.** The handover must preserve, verbatim:
-   - every explicit technical decision made this session and its stated reason
-   - every identifier that was chosen or renamed: variable, function, class, file, config key,
-     schema field, enum value, CLI flag
-   - every edge that was discussed but not resolved (an open dependency, an unconfirmed
-     impact, a target that may need changing)
-   Do not compress these into phrases such as "refactored the auth module" or "various fixes".
-   If a decision was made, name the option chosen and the options rejected.
+Growth and fold are proposals in the interaction language; they are never applied silently.
 
-### Handover Template
+### Handover template
 
 ```markdown
 # WIP HANDOVER — <project name>
 Generated: <YYYY-MM-DD HH:MM> · Graph: `dependency_graph.json` · Schema: `.claude/skills/graph-context-sync/schema/graph_schema.json`
 
 ## 1. Active Task Pointer
-- current_node: `<node_id>` (`<type>`, wip_status: `<status>`)
+- current_node: `<node_id>` (`<type>`, wip_status: `<status>`), part_of: `<parent>` → `<component>`
 - Name: <node.name>
-- Goal of this node in one sentence, as originally stated by the user: "<verbatim>"
-- Work completed this session (concrete, file-level):
+- Goal in one sentence, as stated by the user: "<verbatim>"
+- Work completed this session (file-level):
   - `<path>`: <what changed>
-- Work NOT yet done (concrete):
+- Work NOT yet done:
   - <item>
 
-## 2. Subgraph Context Range
-Nodes that were hydrated and must be re-hydrated on resume (`/graph-hydrate <current_node>` reproduces this).
-| hop | id | type | wip_status | why it matters to the active task |
-|-----|----|------|------------|-----------------------------------|
-| 0 | ... | ... | ... | ... |
-| 1 | ... | ... | ... | ... |
-| 2 | ... | ... | ... | ... |
-
-Files read this session that are outside the subgraph's `docs` / `code_targets` (candidates to add to the graph):
-- `<path>` — <reason it was needed>
+## 2. Components and Subgraph Context Range
+### Components (R7)
+| id | name | roots | overview doc | wip |
+|----|------|-------|--------------|-----|
+### Subgraph (re-hydrate with `/graph-hydrate <current_node>`)
+| hop | id | type | wip_status | why it matters |
+|-----|----|------|------------|----------------|
+Files read outside the subgraph (candidates to add to the graph):
+- `<path>` — <reason>
 
 ## 3. Hard Decisions Log
-One entry per explicit technical decision. Verbatim identifiers. No paraphrase.
-| # | Decision | Chosen | Rejected alternatives | Reason (as stated) | Fixed identifiers |
-|---|----------|--------|-----------------------|--------------------|-------------------|
-| D1 | ... | ... | ... | ... | `var_name`, `ClassName`, `config.key`, ... |
+| # | Decision | Chosen | Rejected alternatives | Reason (as stated) | Fixed identifiers | Registry id (if logged) |
+|---|----------|--------|-----------------------|--------------------|-------------------|-------------------------|
 
 ## 4. Unresolved Edges
-Dependencies or impacts that were raised but not confirmed, closed, or reflected in code.
-| # | From node | To node / file | Kind (depends_on / affects / unknown) | What is unresolved | Who or what resolves it |
-|---|-----------|----------------|----------------------------------------|--------------------|-------------------------|
-| U1 | ... | ... | ... | ... | ... |
+| # | From node | To node / file | Kind | What is unresolved | Who or what resolves it |
+|---|-----------|----------------|------|--------------------|-------------------------|
 
 ## 5. Immediate Resume Trigger
-The exact first actions for the next session, in order. No discovery step should be needed.
-1. Run `/graph-hydrate <current_node>` and confirm the Impact Assessment Checklist matches section 2.
+1. Run `/graph-hydrate <current_node>` and confirm the checklist matches section 2.
 2. Open `<path>` at `<symbol or line>`; the next edit is: <precise description>.
-3. Run: `<command>` and expect: <expected output>.
+3. Run: `<command>`; expect: <expected output>.
 4. Blocking question for the user, if any: "<verbatim question>"
+
+## 6. Decision Drift
+Decisions changed this session and their re-examine sets (see hydrate "Decisions to re-examine").
+| changed decision | related node | resolved / unresolved | note |
+|------------------|--------------|-----------------------|------|
+Growth proposals made this session (accepted / declined): ...
+Fold proposals made this session (accepted / declined): ...
+
+## 7. Staleness
+| node | code last changed | docs last changed | finding | action |
+|------|-------------------|-------------------|---------|--------|
 ```
+
+## `/graph-compact`
+
+Runs the fold check of `/graph-handover` step 3 on the whole graph on demand, with the same approval
+flow. Useful after a batch of registry updates.
 
 ---
 
-## Enforced Rules
+## Enforced rules
 
-These rules are mandatory for every command and for any manual edit of the graph.
-
-### R1 — Cross-Reference Validation
-1. **Key equals id.** For every entry `nodes[k]`, `nodes[k].id === k`. A mismatch is an
-   error: fix the key (never the id, since other edges may reference it) and report the fix.
-2. **Edge targets exist.** Every value in any `depends_on` or `affects` array, and
-   `current_node` when non-null, must be a key of `nodes`. A dangling reference is an error:
-   either create the missing node or remove the edge, and report which was done.
-3. **Schema validity.** The document must validate against `graph_schema.json`
-   (draft 2020-12). When a validator is available, run it, for example:
-
-   ```bash
-   python3 -c "import json,jsonschema;jsonschema.Draft202012Validator(json.load(open('.claude/skills/graph-context-sync/schema/graph_schema.json'))).validate(json.load(open('dependency_graph.json')));print('OK')"
-   ```
-
-   When no validator is available, check the required fields, enums, and id pattern manually
-   and say so in the report.
-4. **No self-edges.** A node may not list itself in `depends_on` or `affects`.
-
-### R2 — Hydration Rule
-- **Never modify code before hydrating.** If `dependency_graph.json` exists, any edit to a
-  file under some node's `code_targets`, and any feature change or bug fix in general, must be
-  preceded by `/graph-hydrate <node_id>` for the relevant node, with every item of the
-  Pre-modification checks ticked.
-- If the relevant node does not exist yet, create it first (via `/graph-init` refresh or a
-  manual addition that passes R1), then hydrate.
-- If the user explicitly asks to skip hydration, state the risk in one sentence, record the
-  skip in the next handover's Unresolved Edges, and proceed.
-
-### R3 — Handover Fidelity
-- `/graph-handover` output must satisfy the Fidelity rule above. A handover containing only
-  generic summaries is non-compliant and must be rewritten before the session ends.
-- Sections 1–5 of the template are all mandatory. An empty section is written as
-  `- none` so that absence is explicit, not accidental.
+| Rule | Content |
+|------|---------|
+| **R1 Cross-reference validation** | `nodes[k].id == k` (fix the key, never the id). Every target of `part_of` / `depends_on` / `affects` / `resolves` / `supersedes` and `current_node` exists. No self-edges. `part_of` ≤ 1 and acyclic. `resolves` only decision → issue; `supersedes` only decision → decision. `source_ref` matches some `config.registries[].id_pattern` when registries are defined. Non-component `code_targets` fall under the union of component `code_targets`. Schema-valid (run `python3 -c "import json,jsonschema;jsonschema.Draft202012Validator(json.load(open('.claude/skills/graph-context-sync/schema/graph_schema.json'))).validate(json.load(open('dependency_graph.json')));print('OK')"` when available; otherwise check manually and say so). |
+| **R2 Hydration** | If `dependency_graph.json` exists, never modify code before `/graph-hydrate <node_id>` of the relevant node with every pre-modification check ticked. If the node does not exist, create it first (init refresh or manual addition passing R1). If the user explicitly asks to skip, state the risk in one sentence, log the skip in Unresolved Edges, proceed. |
+| **R3 Handover fidelity** | Sections 1–7 mandatory; verbatim decisions, identifiers, unresolved edges; empty = `- none`. |
+| **R4 Interaction language** | Every question, recommendation table, approval request, proposal (split / fold / component) and checklist shown to the user is written in `config.interaction_language` (inferred from CLAUDE.md and the user's messages when unset). Graph contents, handover file, SKILL text stay English. |
+| **R5 Structure follows design docs** | `/graph-init` never generates `task`. Decision / issue nodes exist only when referenced from a document in scope or from registry text of a referenced id. Every decision / issue is attached (`part_of`) to ≥ 1 component / feature / function. |
+| **R6 Footprint** | The skill writes only to: its own directory, `dependency_graph.json`, the file at `config.handover_path`, the marked block in `CLAUDE.md`, the marked block in `.gitignore`. Never design docs, registries, source code, other handover files, `.claude/settings*.json`, or Claude memory. A write outside the footprint is refused and reported. |
+| **R7 Always-visible top layer** | Hydrate output and handover §2 begin with the table of all `component` nodes, regardless of hop distance. |
+| **R8 No reinvention** | Before proposing any new feature or function, search `nodes` (name, docs, code_targets) across all components and present matches. Never propose a new component autonomously; that is a user decision. Violations are logged in Unresolved Edges. |

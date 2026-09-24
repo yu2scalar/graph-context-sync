@@ -1,5 +1,13 @@
 {
-  "$schema": "../schema/graph_schema.json",
+  "$schema": "./.claude/skills/graph-context-sync/schema/graph_schema.json",
   "current_node": null,
-  "nodes": {}
+  "nodes": {},
+  "config": {
+    "interaction_language": "en",
+    "handover_path": ".context/WIP_HANDOVER.md",
+    "design_root": "docs/",
+    "docs_scope": ["docs/**/*.md"],
+    "registries": [],
+    "growth_threshold": 5
+  }
 }
