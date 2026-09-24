@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scalar-labs.com/schemas/graph-context-sync/graph_schema.json",
+  "title": "Project Graph Context",
+  "description": "Graph of project context nodes (features, decisions, tasks, issues) with their documentation, code targets and inter-node edges. Skill-level invariants not expressible here: (1) every key of `nodes` must equal that node's `id`; (2) `current_node` and every entry of `depends_on` / `affects` must exist as a key in `nodes`.",
+  "type": "object",
+  "required": ["current_node", "nodes"],
+  "properties": {
+    "current_node": {
+      "description": "Id of the node currently being worked on, or null when no node is active. Must be a key of `nodes`.",
+      "oneOf": [
+        { "$ref": "#/$defs/nodeId" },
+        { "type": "null" }
+      ]
+    },
+    "nodes": {
+      "description": "All graph nodes keyed by node id. Each key must equal the `id` of its value.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/nodeId" },
+      "additionalProperties": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "nodeId": {
+      "description": "Stable node identifier: lowercase letters, digits, hyphen or underscore; must start with a letter or digit.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "filePath": {
+      "description": "Project-relative file path.",
+      "type": "string",
+      "minLength": 1
+    },
+    "nodeType": {
+      "type": "string",
+      "enum": ["feature", "decision", "task", "issue"]
+    },
+    "wipStatus": {
+      "type": "string",
+      "enum": ["DONE", "IN_PROGRESS", "BLOCKED"]
+    },
+    "nodeIdList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nodeId" },
+      "uniqueItems": true
+    },
+    "filePathList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/filePath" },
+      "uniqueItems": true
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "name", "docs", "code_targets"],
+      "properties": {
+        "id": {
+          "description": "Node identifier. Must equal the key under which this node is stored in `nodes`.",
+          "$ref": "#/$defs/nodeId"
+        },
+        "type": {
+          "description": "Kind of node.",
+          "$ref": "#/$defs/nodeType"
+        },
+        "name": {
+          "description": "Human-readable name of the node.",
+          "type": "string",
+          "minLength": 1
+        },
+        "docs": {
+          "description": "Documentation files describing this node (plans, design notes, ADRs). May be empty.",
+          "$ref": "#/$defs/filePathList"
+        },
+        "code_targets": {
+          "description": "Source files this node creates or modifies. May be empty (e.g. for a pure decision node).",
+          "$ref": "#/$defs/filePathList"
+        },
+        "depends_on": {
+          "description": "Ids of nodes this node depends on (incoming prerequisites). Each must exist in `nodes`.",
+          "$ref": "#/$defs/nodeIdList"
+        },
+        "affects": {
+          "description": "Ids of nodes impacted by this node (outgoing effects). Each must exist in `nodes`.",
+          "$ref": "#/$defs/nodeIdList"
+        },
+        "wip_status": {
+          "description": "Work-in-progress status of the node.",
+          "$ref": "#/$defs/wipStatus"
+        }
+      }
+    }
+  }
+}
