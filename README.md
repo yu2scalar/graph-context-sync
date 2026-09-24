@@ -12,18 +12,18 @@ content): components, design-document structure, decisions, issues, and the rela
 the relevant 1-hop / 2-hop neighbourhood to be loaded before any code change and writes lossless handovers when
 work pauses.
 
-Current version: **3.0.0**.
+Current version: **3.1.0**. Plugin name `graph`, marketplace `graph-context-sync` (this repository).
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `/graph-context-sync:install` | Seed `dependency_graph.json`, append one marked block each to `CLAUDE.md` and `.gitignore`, snapshot checksums. Nothing else is written to your project. |
-| `/graph-context-sync:init [--reconfigure] [--reset-structure]` | Analyse the project, recommend and ask for `config` (design root, registries, handover path, language, components), derive the graph from design docs and registries. Idempotent; preserves human decisions unless `--reset-structure`. |
-| `/graph-context-sync:hydrate <node_id>` | Load the node plus 1-hop / 2-hop neighbours over every edge kind, read every referenced file, and emit the Impact Assessment Checklist: components, subgraph, inherited decision constraints, decisions to re-examine, existing capabilities, stale docs, blast radius. Required before modifying code. |
-| `/graph-context-sync:handover` | Update the graph, propose splits (growth) and folds (compaction), run the staleness check, write the handover: Active Task Pointer, Components + Subgraph, Hard Decisions Log, Unresolved Edges, Immediate Resume Trigger, Decision Drift, Staleness. |
-| `/graph-context-sync:compact` | Run the fold check on demand. |
-| `/graph-context-sync:uninstall` | Remove the footprint, strip the marked blocks, verify byte-identical restoration, then tell you how to remove the plugin. |
+| `/graph:install` | Seed `dependency_graph.json`, append one marked block each to `CLAUDE.md` and `.gitignore`, snapshot checksums. Nothing else is written to your project. |
+| `/graph:init [--reconfigure] [--reset-structure]` | Analyse the project, recommend and ask for `config` (design root, registries, handover path, language, components), derive the graph from design docs and registries. Idempotent; preserves human decisions unless `--reset-structure`. |
+| `/graph:hydrate <node_id>` | Load the node plus 1-hop / 2-hop neighbours over every edge kind, read every referenced file, and emit the Impact Assessment Checklist: components, subgraph, inherited decision constraints, decisions to re-examine, existing capabilities, stale docs, blast radius. Required before modifying code. |
+| `/graph:handover` | Update the graph, propose splits (growth) and folds (compaction), run the staleness check, write the handover: Active Task Pointer, Components + Subgraph, Hard Decisions Log, Unresolved Edges, Immediate Resume Trigger, Decision Drift, Staleness. |
+| `/graph:compact` | Run the fold check on demand. |
+| `/graph:uninstall` | Remove the footprint, strip the marked blocks, verify byte-identical restoration, then tell you how to remove the plugin. |
 
 Questions, recommendations and approvals are asked in your project's language (`config.interaction_language`);
 graph contents and handover files are English.
@@ -33,11 +33,12 @@ graph contents and handover files are English.
 ```bash
 # At the Claude Code prompt
 /plugin marketplace add yu2scalar/graph-context-sync
-/plugin install graph-context-sync@graph-context-sync
+/plugin install graph@graph-context-sync
 /reload-plugins                # or restart the session
+# commands are now /graph:install, /graph:init, /graph:hydrate <node_id>, /graph:handover, /graph:compact, /graph:uninstall
 ```
 
-Then, inside the project you want to index: `/graph-context-sync:install` followed by `/graph-context-sync:init`.
+Then, inside the project you want to index: `/graph:install` followed by `/graph:init`.
 
 ## Update
 
@@ -50,16 +51,16 @@ Then, inside the project you want to index: `/graph-context-sync:install` follow
 
 ```bash
 # inside each project first (reversible footprint):
-/graph-context-sync:uninstall
+/graph:uninstall
 # then the plugin itself:
-/plugin uninstall graph-context-sync@graph-context-sync
+/plugin uninstall graph@graph-context-sync
 /plugin marketplace remove graph-context-sync
 /reload-plugins
 ```
 
 ## What gets written into your project
 
-Only these, all removable by `/graph-context-sync:uninstall`:
+Only these, all removable by `/graph:uninstall`:
 
 | Path | Purpose |
 |------|---------|
@@ -85,7 +86,7 @@ says how such ids are recognised and which file holds their text.
 decisions and issues reach `config.growth_threshold`; superseded decisions and resolved issues are folded into
 the surviving decision (`folded`). Both are proposals that need your approval.
 
-Full data model and the public decision register: `plugin/skills/graph-context-sync/references/`.
+Full data model and the public decision register: `plugin/skills/protocol/references/`.
 
 ## Repository layout
 
@@ -94,7 +95,7 @@ Full data model and the public decision register: `plugin/skills/graph-context-s
 plugin/
 ├── .claude-plugin/plugin.json
 └── skills/
-    ├── graph-context-sync/      # protocol: SKILL.md, schema/, templates/, references/
+    ├── protocol/                # /graph:protocol — SKILL.md, schema/, templates/, references/
     ├── install/  uninstall/  init/  hydrate/  handover/  compact/   # thin delegating commands
 ```
 
@@ -102,4 +103,4 @@ plugin/
 
 R1 cross-reference validation · R2 hydrate before modifying code · R3 handover fidelity ·
 R4 interaction language · R5 structure follows design docs · R6 bounded footprint ·
-R7 components always visible · R8 no reinvention. Full text in `plugin/skills/graph-context-sync/SKILL.md`.
+R7 components always visible · R8 no reinvention. Full text in `plugin/skills/protocol/SKILL.md`.

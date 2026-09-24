@@ -30,4 +30,4 @@ Design decisions behind the protocol, in the order they were made. Folded = abso
 | D18 | S5 absorbed into R1 | supersedes S5 | active |
 | D19 | Handover template hardening: legend, "Resolved this session" line, who/when, local-only marker | — | active |
 | D20 | Package as a Claude Code plugin (marketplace + `plugin/`); skill files never enter the project; paths via `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}`; footprint = graph + handover + 2 marked blocks | refines D6 | active |
-| D21 | Delegate skills renamed to `install/uninstall/init/hydrate/handover/compact` → `/graph-context-sync:<name>`; bare `/graph-*` is impossible for plugin skills | refines D16 | active |
+| D21 | Delegate skills renamed to `install/uninstall/init/hydrate/handover/compact` → `/graph:<name>`; bare `/graph-*` is impossible for plugin skills | refines D16 | active |

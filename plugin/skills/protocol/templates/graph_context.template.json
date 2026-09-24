@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/yu2scalar/graph-context-sync/main/plugin/skills/graph-context-sync/schema/graph_schema.json",
+  "$schema": "https://raw.githubusercontent.com/yu2scalar/graph-context-sync/main/plugin/skills/protocol/schema/graph_schema.json",
   "current_node": null,
   "nodes": {},
   "config": {
