@@ -15,10 +15,17 @@ handovers when work pauses.
 ## Contents
 
 ```
-.claude/skills/graph-context-sync/
-├── SKILL.md                              # protocol: 6 sub-commands, 8 enforced rules, handover template
-├── schema/graph_schema.json              # JSON Schema (draft 2020-12) for dependency_graph.json
-└── templates/graph_context.template.json # minimal valid seed graph
+.claude/skills/
+├── graph-context-sync/
+│   ├── SKILL.md                              # protocol: 6 sub-commands, 8 enforced rules, handover template
+│   ├── schema/graph_schema.json              # JSON Schema (draft 2020-12) for dependency_graph.json
+│   └── templates/graph_context.template.json # minimal valid seed graph
+├── graph-install/SKILL.md                    # thin delegating commands so /graph-init etc.
+├── graph-uninstall/SKILL.md                  # work as direct slash commands
+├── graph-init/SKILL.md
+├── graph-hydrate/SKILL.md
+├── graph-handover/SKILL.md
+└── graph-compact/SKILL.md
 ```
 
 ## Install into a project
@@ -27,7 +34,7 @@ Copy the skill directory, then let the skill do the rest with a bounded, reversi
 
 ```bash
 mkdir -p .claude/skills
-cp -r /path/to/graph-context-sync/.claude/skills/graph-context-sync .claude/skills/
+cp -r /path/to/graph-context-sync/.claude/skills/graph-* .claude/skills/
 ```
 
 Then in Claude Code: `/graph-install` (appends one marked block to `CLAUDE.md` and `.gitignore`, creates the

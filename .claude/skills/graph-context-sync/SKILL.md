@@ -24,6 +24,7 @@ holds content; it holds references to where the content lives and the relations 
 | `dependency_graph.json` (project root) | The graph. Must validate against the schema. |
 | `.claude/skills/graph-context-sync/schema/graph_schema.json` | JSON Schema, draft 2020-12. Authoritative for shapes. |
 | `.claude/skills/graph-context-sync/templates/graph_context.template.json` | Minimal valid seed graph. |
+| `.claude/skills/graph-{install,uninstall,init,hydrate,handover,compact}/SKILL.md` | Six thin delegating skills so that `/graph-init` etc. work as direct slash commands (D16). Each reads this file and executes the matching section. |
 | `config.handover_path` (default `.context/WIP_HANDOVER.md`) | Handover written by `/graph-handover`. |
 
 ## Data model (summary; schema is authoritative)
@@ -68,9 +69,10 @@ Not in config, by decision: `code_roots` (derived: union of component nodes' `co
 
 ## Command recognition
 
-Treat any of these as an invocation: `/graph-install`, `/graph-uninstall`, `/graph-init`,
-`/graph-hydrate <node_id>`, `/graph-handover`, `/graph-compact`, or
-`/graph-context-sync <install|uninstall|init|hydrate <node_id>|handover|compact>`. Natural-language
+`/graph-install`, `/graph-uninstall`, `/graph-init`, `/graph-hydrate <node_id>`, `/graph-handover` and
+`/graph-compact` are registered as their own slash commands via the six delegating skills (D16; this
+superseded S2, under which only `/graph-context-sync <sub>` existed). The long form
+`/graph-context-sync <install|uninstall|init|hydrate <node_id>|handover|compact>` still works. Natural-language
 equivalents ("rebuild the dependency graph", "hydrate the commit-protocol node", "write the handover",
 "compact the decisions") map to the same commands.
 
@@ -80,7 +82,8 @@ equivalents ("rebuild the dependency graph", "hydrate the commit-protocol node",
 
 Purpose: put the skill into a host project with a bounded, reversible footprint (rule R6).
 
-1. If invoked from the upstream repo, copy `.claude/skills/graph-context-sync/` into the target.
+1. If invoked from the upstream repo, copy `.claude/skills/graph-context-sync/` **and the six delegating
+   skill directories** `.claude/skills/graph-{install,uninstall,init,hydrate,handover,compact}/` into the target.
 2. Record sha256 of the target's `CLAUDE.md` and `.gitignore` as they are now (null if absent).
 3. Create `dependency_graph.json` from the template if absent.
 4. Append to `CLAUDE.md` (create if absent) exactly one marked block:
@@ -105,7 +108,7 @@ Purpose: put the skill into a host project with a bounded, reversible footprint 
 
 ## `/graph-uninstall`
 
-1. Compute the footprint: the skill directory, `dependency_graph.json`, the file at `config.handover_path`
+1. Compute the footprint: the skill directory, the six delegating skill directories, `dependency_graph.json`, the file at `config.handover_path`
    (and `.context/` if that is its directory and it is otherwise empty), the marked block in `CLAUDE.md`,
    the marked block in `.gitignore`.
 2. Show the list with a per-path action (delete file / strip block / delete empty dir) and whether the path
@@ -347,6 +350,6 @@ flow. Useful after a batch of registry updates.
 | **R3 Handover fidelity** | Sections 1–7 mandatory; verbatim decisions, identifiers, unresolved edges; empty = `- none`. |
 | **R4 Interaction language** | Every question, recommendation table, approval request, proposal (split / fold / component) and checklist shown to the user is written in `config.interaction_language` (inferred from CLAUDE.md and the user's messages when unset). Graph contents, handover file, SKILL text stay English. |
 | **R5 Structure follows design docs** | `/graph-init` never generates `task`. Decision / issue nodes exist only when referenced from a document in scope or from registry text of a referenced id. Every decision / issue is attached (`part_of`) to ≥ 1 component / feature / function. |
-| **R6 Footprint** | The skill writes only to: its own directory, `dependency_graph.json`, the file at `config.handover_path`, the marked block in `CLAUDE.md`, the marked block in `.gitignore`. Never design docs, registries, source code, other handover files, `.claude/settings*.json`, or Claude memory. A write outside the footprint is refused and reported. |
+| **R6 Footprint** | The skill writes only to: its own directory, the six delegating skill directories (`.claude/skills/graph-*/`), `dependency_graph.json`, the file at `config.handover_path`, the marked block in `CLAUDE.md`, the marked block in `.gitignore`. Never design docs, registries, source code, other handover files, `.claude/settings*.json`, or Claude memory. A write outside the footprint is refused and reported. |
 | **R7 Always-visible top layer** | Hydrate output and handover §2 begin with the table of all `component` nodes, regardless of hop distance. |
 | **R8 No reinvention** | Before proposing any new feature or function, search `nodes` (name, docs, code_targets) across all components and present matches. Never propose a new component autonomously; that is a user decision. Violations are logged in Unresolved Edges. |
